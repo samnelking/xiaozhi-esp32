@@ -1,35 +1,95 @@
 {
+    // 芯片目标平台：ESP32-C3（RISC-V架构）
     "target": "esp32c3",
+    
+    // 固件描述：专为4MB Flash/400KB RAM的ESP32-C3 SuperMini开发板优化的固件配置
     "description": "ESP32-C3 SuperMini优化固件 - 针对4MB Flash/400KB RAM极限优化",
+    
+    // 构建配置数组
     "builds": [
         {
+            // 构建配置名称
             "name": "esp32c3-supermini",
+            
+            // SDK配置追加项（覆盖默认配置）
             "sdkconfig_append": [
+                // 目标芯片型号定义
                 "CONFIG_IDF_TARGET=\"esp32c3\"",
+                
+                // Flash容量配置（4MB）
                 "CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y",
+                
+                // 分区表文件路径（使用4MB专用分区表）
                 "CONFIG_PARTITION_TABLE_CUSTOM_FILENAME=\"partitions/v2/4m.csv\"",
+                
+                // 启用电源管理（节能）
                 "CONFIG_PM_ENABLE=y",
+                
+                // 启用无滴答空闲模式（进一步降低功耗）
                 "CONFIG_FREERTOS_USE_TICKLESS_IDLE=y",
+                
+                // 使用USB串口/JTAG作为控制台输出
                 "CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y",
+                
+                // 主任务栈大小设置为7KB（平衡内存使用和功能需求）
                 "CONFIG_ESP_MAIN_TASK_STACK_SIZE=7168",
+                
+                // FreeRTOS时钟频率设置为1000Hz（1ms滴答）
                 "CONFIG_FREERTOS_HZ=1000",
+                
+                // 空闲任务栈大小设置为768字节（节省内存）
                 "CONFIG_FREERTOS_IDLE_TASK_STACKSIZE=768",
+                
+                // Wi-Fi静态接收缓冲区数量（减少内存占用）
                 "CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=3",
+                
+                // Wi-Fi动态接收缓冲区数量（平衡性能和内存）
                 "CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=4",
+                
+                // 禁用Wi-Fi AMPDU TX聚合（节省内存，降低复杂度）
                 "CONFIG_ESP_WIFI_AMPDU_TX_ENABLED=n",
+                
+                // Wi-Fi接收块确认窗口大小
                 "CONFIG_ESP_WIFI_RX_BA_WIN=4",
+                
+                // 禁用WPA3 SAE安全协议（减少代码体积）
                 "CONFIG_ESP_WIFI_ENABLE_WPA3_SAE=n",
+                
+                // 设置ESPNOW最大加密连接数为0（不启用ESPNOW加密）
                 "CONFIG_ESP_WIFI_ESPNOW_MAX_ENCRYPT_NUM=0",
+                
+                // 禁用企业级Wi-Fi支持（减少固件体积）
                 "CONFIG_ESP_WIFI_ENTERPRISE_SUPPORT=n",
+                
+                // LWIP最大Socket数量限制为10（节省内存）
                 "CONFIG_LWIP_MAX_SOCKETS=10",
+                
+                // TCP/IP接收邮箱大小
                 "CONFIG_LWIP_TCPIP_RECVMBOX_SIZE=16",
+                
+                // 禁用IPv6支持（减少内存占用和代码体积）
                 "CONFIG_LWIP_IPV6=n",
+                
+                // LWIP TCP/IP任务栈大小
                 "CONFIG_LWIP_TCPIP_TASK_STACK_SIZE=2048",
+                
+                // 启用MbedTLS动态释放配置数据（优化内存使用）
                 "CONFIG_MBEDTLS_DYNAMIC_FREE_CONFIG_DATA=y",
+                
+                // 使用newlib-nano格式化库（减小代码体积）
                 "CONFIG_NEWLIB_NANO_FORMAT=y",
+                
+                // 编译器优化选项：以代码体积优化优先
                 "CONFIG_COMPILER_OPTIMIZATION_SIZE=y",
+                
+                // 启用ESP唤醒词功能
                 "CONFIG_USE_ESP_WAKE_WORD=y",
-                "CONFIG_SR_WN_WN9S_NIHAOXIAOZHI=y"
+                
+                // 启用"你好小智"唤醒词模型
+                "CONFIG_SR_WN_WN9S_NIHAOXIAOZHI=y",
+                
+                // 设置默认语言为简体中文
+                "CONFIG_LANGUAGE_ZH_CN=y"
             ]
         }
     ]
