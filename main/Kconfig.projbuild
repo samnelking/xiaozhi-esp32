@@ -450,6 +450,9 @@ choice BOARD_TYPE
     config BOARD_TYPE_AIPI_LITE
         bool "AIPI-Lite"
         depends on IDF_TARGET_ESP32S3
+    config BOARD_TYPE_MY_CUSTOM_BOARD
+        bool "esp32c3_supermini_board"
+        depends on IDF_TARGET_ESP32C3  # 根据你的目标芯片修改
     config BOARD_TYPE_HU_087
         bool "HU-087"
         depends on IDF_TARGET_ESP32S3
