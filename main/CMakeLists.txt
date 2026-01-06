@@ -577,6 +577,11 @@ elseif(CONFIG_BOARD_TYPE_HU_087)
     set(BOARD_TYPE "hu-087")
     set(BUILTIN_TEXT_FONT font_puhui_basic_14_1)
     set(BUILTIN_ICON_FONT font_awesome_14_1)
+elseif(CONFIG_BOARD_TYPE_MY_CUSTOM_BOARD)
+    set(BOARD_TYPE "esp32c3_supermini_board")  # 与目录名一致
+    set(BUILTIN_TEXT_FONT font_puhui_basic_16_4)  # 根据屏幕大小选择合适的字体
+    set(BUILTIN_ICON_FONT font_awesome_16_4)
+    set(DEFAULT_EMOJI_COLLECTION twemoji_64)  # 可选，如果需要表情显示
 endif()
 
 file(GLOB BOARD_SOURCES
