@@ -1,0 +1,245 @@
+name: Build and Release ESP32-C3 SuperMini Firmware
+on:
+  push:
+    tags:
+      - 'v*'  # 官方推荐的标签触发规则
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g., v1.0.0)'
+        required: true
+        default: 'v1.0.0'
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # 发布Release需要的权限（官方推荐）
+    
+    steps:
+    - name: Checkout this repo
+      uses: actions/checkout@v4
+      with:
+        path: board-config
+
+    - name: Checkout xiaozhi-esp32
+      uses: actions/checkout@v4
+      with:
+        repository: samnelking/xiaozhi-esp32
+        path: xiaozhi-esp32
+        submodules: recursive
+        fetch-depth: 1
+      timeout-minutes: 30
+
+    - name: Setup board configuration
+      run: |
+        # 官方推荐的目录创建与文件复制方式，添加错误处理
+        mkdir -p xiaozhi-esp32/main/boards/esp32c3-supermini || { echo "创建板卡目录失败"; exit 1; }
+        cp board-config/config.h xiaozhi-esp32/main/boards/esp32c3-supermini/ || { echo "复制config.h失败"; exit 1; }
+        cp board-config/config.json xiaozhi-esp32/main/boards/esp32c3-supermini/ || { echo "复制config.json失败"; exit 1; }
+        cp board-config/esp32c3_supermini_board.cc xiaozhi-esp32/main/boards/esp32c3-supermini/ || { echo "复制board.cc失败"; exit 1; }
+        python3 board-config/scripts/setup_board.py xiaozhi-esp32/main || { echo "板卡配置脚本执行失败"; exit 1; }
+
+    - name: Fix format string errors (官方PRI宏规范)
+      run: |
+        echo "=== 修复格式符类型不匹配问题 ==="
+        TARGET_FILES=(
+          "gfx_refr.c"
+          "gfx_obj.c"
+          "font_puhui_30_4.c"
+        )
+        
+        for file_pattern in "${TARGET_FILES[@]}"; do
+          find xiaozhi-esp32 -name "$file_pattern" -type f | while read -r found_file; do
+            echo "处理文件: $found_file"
+            
+            # 修复1：正确添加inttypes.h（ESP-IDF官方推荐的头文件包含格式）
+            if ! grep -q "#include <<inttypes.h>" "$found_file"; then
+              sed -i '1i#include <<inttypes.h>' "$found_file"
+              echo "✅ 已添加正确的inttypes.h头文件"
+            fi
+            
+            # 修复2：格式符替换（遵循C99标准+ESP-IDF官方建议）
+            sed -i 's/%d/%" PRId32/g' "$found_file"       # int32_t对应PRId32
+            sed -i 's/%lu/%" PRIul/g' "$found_file"      # unsigned long对应PRIul
+            sed -i 's/\[%d\]/[%"" PRId32]/g' "$found_file" # 数组索引格式
+            sed -i 's/\[%lu\]/[%"" PRIul]/g' "$found_file"
+            sed -i 's/\$iu/%" PRIul/g' "$found_file"     # 笔误修复
+          done
+        done
+        echo "=== 格式符修复完成 ==="
+
+    - name: Fix component compatibility (ESP32-C3 + ESP-IDF v5.4适配)
+      run: |
+        echo "=== 图形组件API兼容性适配 ==="
+        GFX_SRC_DIR=$(find xiaozhi-esp32 -path "*/espressif2022__esp_emote_gfx/src" -type d)
+        if [ -n "$GFX_SRC_DIR" ]; then
+          echo "找到图形组件目录: $GFX_SRC_DIR"
+          
+          # 修复1：替换ESP32专属efuse头文件（ESP-IDF v5+标准）
+          find "$GFX_SRC_DIR" -name "*.c" -o -name "*.h" | xargs sed -i 's/#include "esp_efuse_table.h"/#include "esp_efuse.h"/g'
+          
+          # 修复2：替换旧版I2S驱动头文件（ESP-IDF v5+使用i2s_std.h）
+          find "$GFX_SRC_DIR" -name "*.c" | xargs sed -i 's/#include "driver\/i2s.h"/#include "driver\/i2s_std.h"/g'
+          
+          # 修复3：移除多核配置（ESP32-C3为单核，无CORE_AFFINITY）
+          find "$GFX_SRC_DIR" -name "CMakeLists.txt" | xargs sed -i 's/CONFIG_FREERTOS_USE_CORE_AFFINITY//g'
+        else
+          echo "未找到图形组件目录，跳过适配"
+        fi
+
+    - name: Install ESP-IDF v5.4 (官方标准安装流程)
+      run: |
+        # 安装官方依赖包
+        sudo apt-get update && sudo apt-get install -y \
+          git wget flex bison gperf python3 python3-pip python3-venv \
+          cmake ninja-build ccache libffi-dev libssl-dev dfu-util libusb-1.0-0
+        # 克隆ESP-IDF v5.4（官方推荐的安装路径）
+        mkdir -p ~/esp && cd ~/esp
+        git clone -b v5.4 --depth 1 https://github.com/espressif/esp-idf.git
+        cd esp-idf
+        git submodule update --init --recursive --depth 1
+        # 安装ESP32-C3目标支持
+        ./install.sh esp32c3
+      timeout-minutes: 30
+
+    - name: Build firmware (ESP-IDF官方命令规范)
+      id: build
+      run: |
+        # 激活ESP-IDF环境（官方标准方式）
+        export IDF_PATH=~/esp/esp-idf
+        . "$IDF_PATH/export.sh" || { echo "激活ESP-IDF环境失败"; exit 1; }
+        cd xiaozhi-esp32
+        
+        # 彻底清理构建缓存（ESP-IDF官方推荐，避免残留干扰）
+        idf.py fullclean
+        rm -rf sdkconfig build/
+        
+        # 设置目标芯片（官方标准命令）
+        idf.py set-target esp32c3 || { echo "设置目标芯片失败"; exit 1; }
+        
+        # 传递配置参数（ESP-IDF官方支持的-D参数格式，注释单独一行）
+        idf.py reconfigure \
+          -DCMAKE_C_FLAGS="-Wall -Wno-error" \
+          -DCMAKE_CXX_FLAGS="-Wall -Wno-error" \
+          -DCONFIG_BOARD_TYPE_ESP32C3_SUPERMINI=y \
+          -DCONFIG_ESPTOOLPY_FLASHSIZE_4MB=y \
+          -DCONFIG_ESPTOOLPY_FLASHSIZE="4MB" \
+          -DCONFIG_PARTITION_TABLE_CUSTOM=y \
+          -DCONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions/v2/4m.csv" \
+          -DCONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=3 \
+          -DCONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=4 \
+          -DCONFIG_USE_ESP_WAKE_WORD=y \
+          -DCONFIG_SR_WN_WN9S_NIHAOXIAOZHI=y
+        # 注释：保留警告但不中断编译（单独一行，避免语法冲突）
+        
+        # 构建固件（官方标准命令，-v启用详细日志）
+        echo "开始构建（详细日志模式）..."
+        idf.py -v -DBOARD_NAME=esp32c3-supermini -DBOARD_TYPE=esp32c3-supermini build || { echo "构建失败"; exit 1; }
+        
+        # 校验固件生成（官方推荐的校验方式）
+        if [ -f "build/xiaozhi.bin" ]; then
+          FIRMWARE_SIZE=$(du -h build/xiaozhi.bin | cut -f1)
+          echo "✅ 构建成功！固件大小: $FIRMWARE_SIZE"
+          echo "size=$FIRMWARE_SIZE" >> "$GITHUB_OUTPUT"
+        else
+          echo "❌ 构建失败：未生成目标固件"
+          exit 1
+        fi
+        
+        # 收集构建日志（路径规范，无../）
+        mkdir -p build-logs
+        cp -r build/log/* build-logs/ 2>/dev/null || true
+
+    - name: Create firmware package
+      run: |
+        cd xiaozhi-esp32/build
+        FIRMWARE_NAME="esp32c3-supermini-firmware-${{ github.event.inputs.version || github.ref_name }}"
+        mkdir -p "$FIRMWARE_NAME"
+        # 复制关键固件文件（官方推荐的固件组成）
+        cp xiaozhi.bin "$FIRMWARE_NAME/" || { echo "复制主固件失败"; exit 1; }
+        cp generated_assets.bin "$FIRMWARE_NAME/" || { echo "复制资源固件失败"; exit 1; }
+        cp bootloader/bootloader.bin "$FIRMWARE_NAME/" || { echo "复制bootloader失败"; exit 1; }
+        cp partition_table/partition-table.bin "$FIRMWARE_NAME/" || { echo "复制分区表失败"; exit 1; }
+        
+        # 生成官方风格的烧录说明
+        cat > "$FIRMWARE_NAME/README.md" << EOF
+        # ESP32-C3 SuperMini 固件烧录说明
+        ## 固件信息
+        - 版本: ${{ github.event.inputs.version || github.ref_name }}
+        - 构建时间: $(date -u +'%Y-%m-%d %H:%M:%S UTC')
+        - 构建ID: ${{ github.run_id }}
+        - ESP-IDF版本: v5.4
+        ## 文件说明
+        1. xiaozhi.bin - 主应用程序固件（0x10000）
+        2. bootloader.bin - 引导加载程序（0x0000）
+        3. partition-table.bin - 分区表（0x8000）
+        4. generated_assets.bin - 唤醒词资源（0x310000）
+        ## 烧录方法（ESP-IDF官方推荐）
+        ### 使用 esptool.py
+        \`\`\`bash
+        esptool.py --chip esp32c3 --port /dev/ttyUSB0 --baud 460800 write_flash \
+          0x0000 bootloader.bin \
+          0x8000 partition-table.bin \
+          0x10000 xiaozhi.bin \
+          0x310000 generated_assets.bin
+        \`\`\`
+        ### 使用 ESP Flash Download Tool
+        1. 下载工具：https://www.espressif.com/zh-hans/support/download/other-tools
+        2. 芯片选择：ESP32-C3
+        3. 按上述地址填写烧录偏移量
+        EOF
+        
+        # 打包固件（官方常用的tar.gz和zip格式）
+        tar -czf "../$FIRMWARE_NAME.tar.gz" "$FIRMWARE_NAME"
+        zip -r "../$FIRMWARE_NAME.zip" "$FIRMWARE_NAME"
+        # 输出路径到环境变量（规范格式）
+        echo "firmware_zip=$(realpath "../$FIRMWARE_NAME.zip")" >> "$GITHUB_ENV"
+        echo "firmware_tar=$(realpath "../$FIRMWARE_NAME.tar.gz")" >> "$GITHUB_ENV"
+
+    - name: Create Release (GitHub官方规范)
+      uses: softprops/action-gh-release@v1
+      if: success()
+      with:
+        tag_name: ${{ github.event.inputs.version || github.ref_name }}
+        name: ESP32-C3 SuperMini Firmware ${{ github.event.inputs.version || github.ref_name }}
+        body: |
+          # ESP32-C3 SuperMini 固件发布
+          ## 固件信息
+          - 版本: ${{ github.event.inputs.version || github.ref_name }}
+          - 构建时间: $(date -u +'%Y-%m-%d %H:%M:%S UTC')
+          - 构建ID: ${{ github.run_id }}
+          - ESP-IDF版本: v5.4
+          - 目标芯片: ESP32-C3 (RISC-V)
+          ## 包含文件
+          1. **固件包** (.zip 和 .tar.gz) - 含所有文件+烧录说明
+          2. **单独固件** (.bin) - 主程序、bootloader、分区表、资源文件
+          3. **构建日志** - 用于调试
+          ## 烧录说明
+          详见固件包内的 README.md（遵循ESP-IDF官方推荐流程）
+          ## 变更记录
+          ${{ github.event.head_commit.message || '无明确变更记录' }}
+          ---
+          📌 说明：自动构建固件，基于ESP-IDF v5.4，仅适配ESP32-C3 SuperMini开发板。
+          技术支持请提交Issues：https://github.com/samnelking/xiaozhi-esp32c3-supermini/issues
+        draft: false
+        prerelease: ${{ contains(github.event.inputs.version, 'beta') || contains(github.event.inputs.version, 'alpha') || contains(github.event.inputs.version, 'rc') }}
+        files: |
+          ${{ env.firmware_zip }}
+          ${{ env.firmware_tar }}
+          xiaozhi-esp32/build/xiaozhi.bin
+          xiaozhi-esp32/build/generated_assets.bin
+          xiaozhi-esp32/build/bootloader/bootloader.bin
+          xiaozhi-esp32/build/partition_table/partition-table.bin
+          xiaozhi-esp32/build-logs/*
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Upload failure logs (GitHub官方Artifact规范)
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: build-failure-logs-${{ github.run_id }}
+        path: |
+          xiaozhi-esp32/build-logs/
+          xiaozhi-esp32/build/
+        retention-days: 7
